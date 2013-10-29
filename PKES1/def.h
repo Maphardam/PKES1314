@@ -8,7 +8,7 @@
 #ifndef DEF_H_
 #define DEF_H_
 
-#define COUNTER_CYCLE 1
+#define COUNTER_CYCLE 3
 #define MAX_COUNTER_VALUE 126
 #define MIN_COUNTER_VALUE -127
 

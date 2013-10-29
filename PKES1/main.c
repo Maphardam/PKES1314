@@ -22,6 +22,21 @@ int uart_putc(char);
 void uart_puts (const char*);
 void writetoDisplay(char, char , char );
 
+enum number {
+	ZERO    = 0b11111101,
+	ONE     = 0b01100001,
+	TWO     = 0b11011011,
+	THREE   = 0b11110011,
+	FOUR    = 0b01100111,
+	FIVE    = 0b10110111,
+	SIX     = 0b10111111,
+	SEVEN   = 0b11100001,
+	EIGHT   = 0b11111111,
+	NINE    = 0b11110111,
+	NOTHING = 0b00000001,
+	MINUS   = 0b00000010
+};
+
 void init()
 {
 	// -------------------------------------------------------------
@@ -103,17 +118,81 @@ int main() {
 		_delay_ms (delay);
 		PORTB |= (1<<7);
 
-		counter_func();
+		counter_trigger=COUNTER_CYCLE;
+		while (counter_trigger > 0) {
+			counter_func();
+			sprintf( s, "trigger: %3d", counter_trigger );
+			uart_puts( s );
+			uart_puts("\r\n");
+			sprintf( s, "| count: %2d | ", counter_value );
+			uart_puts( s );
+			uart_puts("\r\n");
+		}
 
-		sprintf( s, "trigger: %3d", counter_trigger );
-		uart_puts( s );
-		sprintf( s, "| count: %2d | ", counter_value );
-		uart_puts( s );
 		if (counter_dir==1)
 			uart_puts(" up " );
 		else
-			uart_puts("down" );
+			uart_puts(" sdown" );
 		uart_puts( " | \r\n" );
+
+		char negative = 0;
+		if (counter_value < 0) {
+			negative = 1;
+			counter_value *= -1;
+		}
+
+		// last digit
+		switch (counter_value % 10) {
+		case 0: disp[2] = ZERO; break;
+		case 1: disp[2] = ONE; break;
+		case 2: disp[2] = TWO; break;
+		case 3: disp[2] = THREE; break;
+		case 4: disp[2] = FOUR; break;
+		case 5: disp[2] = FIVE; break;
+		case 6: disp[2] = SIX; break;
+		case 7: disp[2] = SEVEN; break;
+		case 8: disp[2] = EIGHT; break;
+		case 9: disp[2] = NINE; break;
+		default: break;
+		}
+
+		// middle digit
+		switch ((counter_value / 10) % 10) {
+		case 0: if (counter_value < 100) {
+					disp[1] = NOTHING;
+				}
+				else {
+					disp[1] = ZERO;
+				}
+				break;
+		case 1: disp[1] = ONE; break;
+		case 2: disp[1] = TWO; break;
+		case 3: disp[1] = THREE; break;
+		case 4: disp[1] = FOUR; break;
+		case 5: disp[1] = FIVE; break;
+		case 6: disp[1] = SIX; break;
+		case 7: disp[1] = SEVEN; break;
+		case 8: disp[1] = EIGHT; break;
+		case 9: disp[1] = NINE; break;
+		default: break;
+		}
+
+		// first digit
+		switch ((counter_value / 100) % 10) {
+		case 0: disp[0] = NOTHING; break;
+		case 1: disp[0] = ONE; break;
+		default: break;
+		}
+
+		if (negative == 1) {
+			if (counter_value < 10) {
+				disp[1] |= MINUS;
+			}
+			else {
+				disp[0] |= MINUS;
+			}
+			counter_value *= -1;
+		}
 
 		writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
 	}
