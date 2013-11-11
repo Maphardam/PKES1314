@@ -22,6 +22,32 @@ int16_t ori_x, ori_y, ori_z;
 int8_t modus;
 // Kanal des ADC Wandlers
 int8_t channel = 3;
+int8_t trigger = 50;
+int8_t MAXTRIGGER = 50;
+
+enum number {
+	ZERO    = 0b11111101,
+	ONE     = 0b01100001,
+	TWO     = 0b11011011,
+	THREE   = 0b11110011,
+	FOUR    = 0b01100111,
+	FIVE    = 0b10110111,
+	SIX     = 0b10111111,
+	SEVEN   = 0b11100001,
+	EIGHT   = 0b11111111,
+	NINE    = 0b11110111,
+	NOTHING = 0b00000001
+};
+
+enum spiritlevel {
+        MIDDLE  = 0b00000011,
+        RIGHT   = 0b01100001,
+        LEFT    = 0b00001101,
+        UP      = 0b10000001,
+        DOWN    = 0b00010001,
+        FLAT    = RIGHT | LEFT
+};
+        
 
 // the setup routine runs once when you press reset:
 void setup() {                
@@ -108,8 +134,12 @@ void loop() {
        // Distance sensor
        // ----------------------------------------------------------------
        
-       distance = linearizeDistance(readADC(channel));
-       displayDistance (distance);
+       if (trigger == 0) {
+         distance = linearizeDistance(readADC(channel));
+         displayDistance (distance);
+         trigger = MAXTRIGGER;
+       }
+       else { trigger--; }
 
    }
 
@@ -117,11 +147,15 @@ void loop() {
 }
 
 int8_t checkButtons(){
-   int8_t modus=0;
+   //int8_t modus=0;
    // Abfrage der Buttons und Moduswechsel
    // -----------------------------------------------------
-   
-   
+   if (PINF & (1<<4)) {
+     modus = 1;
+   }
+   if (PING & (1<<5)) {
+     modus = 2;   
+   }
    // -----------------------------------------------------
    return modus;
 }
@@ -134,8 +168,36 @@ void displaySpiritLevel(int16_t acc_x, int16_t acc_y, int16_t acc_z)
    // -15 Grad <= alpha  <= 15 Grad
    //  15 Grad <= alpha 
    // -----------------------------------------------------
+   char disp[3];
    
+   if (acc_y <= -4000)
+     for (int i = 0; i < 3; i++)
+       disp[i] |= UP;
+   else if (acc_y >= 4000)
+     for (int i = 0; i < 3; i++)
+       disp[i] |= DOWN;
+   else
+     for (int i = 0; i < 3; i++)
+       disp[i] |= MIDDLE;
+       
+   //   7 cases for tilt
+   if (acc_x <= 9000)
+     disp[0] |= LEFT;
+   else if (acc_x <= 6000)
+     disp[0] |= RIGHT;
+   else if (acc_x <= 3000)
+     disp[1] |= LEFT;
+   else if (acc_x >= -9000)
+     disp[2] |= RIGHT;
+   else if (acc_x >= -6000)
+     disp[2] |= LEFT;
+   else if (acc_x >= -3000)
+     disp[1] |= RIGHT;
+   else
+     disp[1] |= FLAT;
    
+   writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
+      
    // -----------------------------------------------------
 }
 
@@ -146,16 +208,73 @@ int8_t linearizeDistance(int distance_raw){
    // eine Entfernung in cm
    // -----------------------------------------------------
    
-   
    // -----------------------------------------------------
-   return distance_cm; 
+   //return distance_cm;
+   return distance_raw; 
 }
 
 void displayDistance (int8_t dist)
 {
    // Darstellung der Distanz in cm auf dem Display
    // -----------------------------------------------------
+   Serial.print("Distance sensor:   ");
+   Serial.print(dist);
+   Serial.print("\r\n");
    
+   char disp[3];
+   
+   // last digit
+   switch (dist % 10) {
+        case 0: disp[2] = ZERO; break;
+	case 1: disp[2] = ONE; break;
+	case 2: disp[2] = TWO; break;
+	case 3: disp[2] = THREE; break;
+	case 4: disp[2] = FOUR; break;
+	case 5: disp[2] = FIVE; break;
+	case 6: disp[2] = SIX; break;
+	case 7: disp[2] = SEVEN; break;
+	case 8: disp[2] = EIGHT; break;
+	case 9: disp[2] = NINE; break;
+	default: break;
+	}
+
+    // middle digit
+    switch ((dist / 10) % 10) {
+	case 0: if (dist < 100) {
+        		disp[1] = NOTHING;
+		}
+		else {
+			disp[1] = ZERO;
+		}
+		break;
+	case 1: disp[1] = ONE; break;
+	case 2: disp[1] = TWO; break;
+	case 3: disp[1] = THREE; break;
+	case 4: disp[1] = FOUR; break;
+	case 5: disp[1] = FIVE; break;
+	case 6: disp[1] = SIX; break;
+	case 7: disp[1] = SEVEN; break;
+	case 8: disp[1] = EIGHT; break;
+	case 9: disp[1] = NINE; break;
+	default: break;
+	}   
+
+      // first digit
+      switch ((dist / 100) % 10) {
+        case 0: disp[0] = NOTHING; break;
+	case 1: disp[0] = ONE; break;
+        case 2: disp[0] = TWO; break;
+	case 3: disp[0] = THREE; break;
+	case 4: disp[0] = FOUR; break;
+	case 5: disp[0] = FIVE; break;
+	case 6: disp[0] = SIX; break;
+	case 7: disp[0] = SEVEN; break;
+	case 8: disp[0] = EIGHT; break;
+	case 9: disp[0] = NINE; break;	
+        default: break;
+      }
+      
+      writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
    
    // -----------------------------------------------------
 }
@@ -165,8 +284,12 @@ int readADC (int8_t channel){
    // möglicherweise mehrmaliges Lesen des ADC Kanals
    // Mittelwertbildung 
    // -----------------------------------------------------
-    
-    
+   long sum = 0;
+   int COUNTER = 10;
+   for (int i = 1; i <= COUNTER; i++) {
+     sum += analogRead(channel);
+   }
+   distance_raw = sum / COUNTER;
    // -----------------------------------------------------
    return distance_raw;
 }
