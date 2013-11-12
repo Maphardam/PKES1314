@@ -181,17 +181,17 @@ void displaySpiritLevel(int16_t acc_x, int16_t acc_y, int16_t acc_z)
        disp[i] |= MIDDLE;
        
    //   7 cases for tilt
-   if (acc_x <= 9000)
+   if (acc_x >= 9000)
      disp[0] |= LEFT;
-   else if (acc_x <= 6000)
+   else if (acc_x >= 6000)
      disp[0] |= RIGHT;
-   else if (acc_x <= 3000)
+   else if (acc_x >= 3000)
      disp[1] |= LEFT;
-   else if (acc_x >= -9000)
+   else if (acc_x <= -9000)
      disp[2] |= RIGHT;
-   else if (acc_x >= -6000)
+   else if (acc_x <= -6000)
      disp[2] |= LEFT;
-   else if (acc_x >= -3000)
+   else if (acc_x <= -3000)
      disp[1] |= RIGHT;
    else
      disp[1] |= FLAT;
