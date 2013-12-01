@@ -25,11 +25,26 @@ float current_rot_deg, sum_rot;
 int8_t modus;
 // Kanal des ADC Wandlers
 // -------------------------------------------------------------
-int8_t channel_0 =  0;  // korrekte Werte bestimmen !
-int8_t channel_1 =  0;
+int8_t channel_0 =  3;  // korrekte Werte bestimmen !
+int8_t channel_1 =  2;
 // -------------------------------------------------------------
 // Laufzeit des Programms
 unsigned long time;
+
+enum number {
+    ZERO    = 0b11111101,
+    ONE     = 0b01100001,
+    TWO     = 0b11011011,
+    THREE   = 0b11110011,
+    FOUR    = 0b01100111,
+    FIVE    = 0b10110111,
+    SIX     = 0b10111111,
+    SEVEN   = 0b11100001,
+    EIGHT   = 0b11111111,
+    NINE    = 0b11110111,
+    NOTHING = 0b00000001,
+    MINUS   = 0b00000010
+};
 
 // the setup routine runs once when you press reset:
 void setup() {                
@@ -105,7 +120,9 @@ void loop() {
        writetoDisplay(0b10011111,0b11111101,0b10110111);
        
        while(modus==0){
-	 modus=checkButtons();
+	      modus=checkButtons();
+              Serial.print("checking buttons. modus = 0");
+              Serial.print("|\r\n");
        }
        time = millis();
    }
@@ -117,10 +134,12 @@ void loop() {
        ((Flydurino*)flydurinoPtr)->getOrientation(&ori_x, &ori_y, &ori_z);
        // Get gyro data 
       ((Flydurino*)flydurinoPtr)->getRotationalSpeed(&rot_x, &rot_y, &rot_z);
+            
+      digitalWrite(12, HIGH);
+      analogWrite(3, 100); // linker Motor (rückwärts)
       
-
-
-       
+      
+      
        //current_rot_deg = ... ;
        //sum_rot=  sum_rot+ ...;
        
@@ -133,12 +152,15 @@ void loop() {
  
 	// Motor control
 	// -----------------------------------------------------
-	    
-	    
+        displayDistance(distance_left);
+	
+        digitalWrite(12, LOW);
+        analogWrite(3, 100); // rechter Motor (vorwärts)
 	// -----------------------------------------------------    
        
        delay(50);
    }
+   
    modus=checkButtons();
 }
 
@@ -146,6 +168,7 @@ int8_t checkButtons(){
    int8_t modus_new=modus;
    // Abfrage der Buttons und Moduswechsel
    // -----------------------------------------------------
+   
    if (digitalRead(4)) {
      modus_new=1;
    } 
@@ -153,47 +176,122 @@ int8_t checkButtons(){
      modus_new=2;
    }
    return modus_new;
+   
 }
 
-void displaySpiritLevel(int16_t acc_x, int16_t acc_y, int16_t acc_z){
-
-   //   3 cases for roll and pitch
-   // -15 Grad <= alpha,
-   // -15 Grad <= alpha  <= 15 Grad
-   //  15 Grad <= alpha 
-   // -----------------------------------------------------
-
-   // -----------------------------------------------------
-}
 
 uint8_t linearizeDistance(uint16_t distance_raw){
    double distance_cm=0;
    // Transformation der Spannungsbezogenen Distanzwerte in
    // eine Entfernung in cm
    // -----------------------------------------------------
-
+   distance_cm = (6787/(distance_raw - 3));
    // -----------------------------------------------------
    return (int8_t)ceil(distance_cm);
 }
 
 void displayDistance (int8_t dist){
-
+   /*
+	char disp [3];
    // Darstellung der Distanz in cm auf dem Display
    // -----------------------------------------------------
-
    
+   // last digit
+   disp[2] = dist % 10;
+
+   // middle digit
+   disp[1] = (dist / 10) % 10;
+   if (disp[1] == 0 && dist < 100) {
+	   disp[1] = ' ';
+   }
+   
+   // first digit
+   disp[0] = dist / 100;
+   if (disp[0] == 0) {
+	   disp[0] = ' ';
+   }
+   
+   writetoDisplay(displayMask(disp[0])^=1, displayMask(disp[1])^=1, displayMask(disp[2])^=1);
    // -----------------------------------------------------
+    */
+	
+	char disp [3];
+	   // Darstellung der Distanz in cm auf dem Display
+	   // -----------------------------------------------------
+	   
+	   // last digit
+	   
+	   switch (dist % 10) {
+	   case 0: disp[2] = ZERO; break;
+	   case 1: disp[2] = ONE; break;
+	   case 2: disp[2] = TWO; break;
+	   case 3: disp[2] = THREE; break;
+	   case 4: disp[2] = FOUR; break;
+	   case 5: disp[2] = FIVE; break;
+	   case 6: disp[2] = SIX; break;
+	   case 7: disp[2] = SEVEN; break;
+	   case 8: disp[2] = EIGHT; break;
+	   case 9: disp[2] = NINE; break;
+	   default: break;
+	   }
 
-
+	   // middle digit
+	   switch ((dist / 10) % 10) {
+	   case 0: 
+	   if (dist < 100) {
+	     disp[1] = NOTHING;
+	   }
+	   else {
+	     disp[1] = ZERO;
+	   }
+	   break;
+	   case 1: disp[1] = ONE; break;
+	   case 2: disp[1] = TWO; break;
+	   case 3: disp[1] = THREE; break;
+	   case 4: disp[1] = FOUR; break;
+	   case 5: disp[1] = FIVE; break;
+	   case 6: disp[1] = SIX; break;
+	   case 7: disp[1] = SEVEN; break;
+	   case 8: disp[1] = EIGHT; break;
+	   case 9: disp[1] = NINE; break;
+	   default: break;
+	   }
+	   
+	   // first digit
+	   switch (dist / 100) {
+	   case 0: disp[0] = NOTHING;break;
+	   case 1: disp[0] = ONE; break;
+	   case 2: disp[0] = TWO; break;
+	   case 3: disp[0] = THREE; break;
+	   case 4: disp[0] = FOUR; break;
+	   case 5: disp[0] = FIVE; break;
+	   case 6: disp[0] = SIX; break;
+	   case 7: disp[0] = SEVEN; break;
+	   case 8: disp[0] = EIGHT; break;
+	   case 9: disp[0] = NINE; break;
+	   default: break;
+	   }
+	   
+	   writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
+	   // -----------------------------------------------------
 }
 
+
+
 uint16_t readADC (int8_t channel){
-   uint16_t distance_raw=0xFFFF;
+   int distance_raw;
+   int maxCnt       = 16;
+   int sum          = 0;
    // möglicherweise mehrmaliges Lesen des ADC Kanals
    // Mittelwertbildung 
    // -----------------------------------------------------
-   distance_raw = analogRead(channel);
-
+   
+   for (int i = 0; i < maxCnt; i++) {
+	 sum += analogRead(channel);
+   }
+   
+   distance_raw = sum / maxCnt;
+	  
    // -----------------------------------------------------
    return distance_raw;
 }
