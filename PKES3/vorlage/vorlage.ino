@@ -25,6 +25,8 @@ int16_t rot_x, rot_y, rot_z;
 float current_rot_deg, sum_rot;
 // Wasserwaage oder Distanzmessung
 int8_t modus;
+int trigger;
+bool drive;
 // Kanal des ADC Wandlers
 // -------------------------------------------------------------
 int8_t channel_0 = 3; // korrekte Werte bestimmen !
