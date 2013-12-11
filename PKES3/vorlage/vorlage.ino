@@ -106,23 +106,30 @@ void setup() {
     // Configure PWM
     // -----------------------------------------------------
     /*
-Fast PWM, 8-bit = Mode 5 (101)
-WGM-Register
-TCCR2A - [COM2A1, COM2A0, COM2B1, COM2B0, reserved, reserved, WGM21, WGM20]
-TCCR2B - [FOC2A, FOC2B, reserved, reserved, WGM22, CS22, CS21, CS20]
-COM2x: toggle(01)/clear(10)/set(11) OC2x on compare match [Compare Output Mode]
-WGM2n: Fast PWM = 011 (0xFF TOP) / 111 (OCR2A TOP) [Waveform Generation Mode]
-FOC2x: have to be zero when operating in PWM mode [FOrce Output Compare]
-CS2n: select clock source, 001 = no prescaling [Clock Select]
-configure OC2A as output? DDB4 set 1
-*/
+    Fast PWM, 8-bit = Mode 5 (101)
+    WGM-Register
     
-    pinMode(3, OUTPUT);
-    pinMode(11, OUTPUT);
-    TCCR2A = _BV(COM2A1) | _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
-    TCCR2B = _BV(CS20); // CS22?
-    OCR2A = 180; // set top value
-    OCR2B = 50;
+    TCCR2A - [COM2A1, COM2A0, COM2B1, COM2B0, reserved, reserved, WGM21, WGM20]
+    TCCR2B - [FOC2A, FOC2B, reserved, reserved, WGM22, CS22, CS21, CS20]
+    
+    COM2x: toggle(01)/clear(10)/set(11) OC2x on compare match [Compare Output Mode]
+    WGM2n: Fast PWM = 011 (0xFF TOP) / 111 (OCR2A TOP) [Waveform Generation Mode]
+    
+    FOC2x: have to be zero when operating in PWM mode [FOrce Output Compare]
+    CS2n: select clock source, 001 = no prescaling [Clock Select]
+    */
+    
+    pinMode(3, OUTPUT); // channel A (left motor)
+    
+    TCCR3A = _BV(WGM31) | _BV(WGM30); // -> fast PWM with OCR3A top
+    TCCR3B = _BV(CS32) | _BV(WGM32); // -> prescaler 64
+    OCR3C = 220; // set top value
+    
+    pinMode(11, OUTPUT); // channel B (right motor)
+    
+    TCCR1A = _BV(WGM11) | _BV(WGM10); // -> fast PWM with OCR1A top
+    TCCR1B = _BV(CS12) | _BV(WGM12); // -> prescaling clk/64
+    OCR1A = 160; // set top value
     
     // -----------------------------------------------------
 
@@ -153,7 +160,7 @@ void loop() {
    
    // Gyro task
    if (modus==1){
-       // Receive acceleromation values
+     // Receive acceleromation values
        ((Flydurino*)flydurinoPtr)->getAcceleration(&acc_x, &acc_y, &acc_z);
        // Get compass data
        ((Flydurino*)flydurinoPtr)->getOrientation(&ori_x, &ori_y, &ori_z);
@@ -207,13 +214,14 @@ void loop() {
 
       	// degree -> speed
       	// v = -omega * k
-      	// speed is [0, 255] (255 is quiet fast, so lets set the limit to 200)
+      	// speed is [0, 255] (255 is quite fast, so lets set the limit to 200)
       	// 360° is equal to v=200
       	// 1° is equal to 200/360 = 0.55
       	int v = 0;
 	
       	if (dir < 0) sum_rot *= -1;
 
+        /*
       	//compute speed
       	if (sum_rot <= 18)
       	//minimum speed = 10
@@ -223,7 +231,10 @@ void loop() {
     		v = 200;
       	else
     		v = sum_rot * 0.55f;
-
+        */
+        
+        v = 200;
+        
       	if (dir < 0) sum_rot *= -1;
 
       	Serial.print(". Speed: ");
@@ -234,14 +245,21 @@ void loop() {
       	if (current_rot_deg == 0.0 && sum_rot != 0.0)
     		drive = true;
 
-      	if (sum_rot == 0.0)
+      	//if (sum_rot == 0.0)
+        if (sum_rot < 10 && sum_rot > -10)
     		drive = false;
 
       	Serial.print(". Drive: ");
       	Serial.println(drive);
 	
-      	if (drive)
-    		returnToOrigin(dir, v);      
+      	if (drive) {
+           returnBobbyToOrigin(dir, v);
+        }
+        else {
+           // stop the motors
+           TCCR1A &= ~_BV(COM1A1);
+           TCCR3A &= ~_BV(COM3C1);  
+        }
    }
    
    // Driving without any collision
@@ -293,11 +311,11 @@ void loop() {
           disp[2] |= 0b10000001;
         }
         
-        writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
+        // writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
         
         // move
         if (turn_right) {
-          turnRight();
+          turnRight(200);
         }
         else {
           goAhead();
@@ -317,24 +335,49 @@ void goAhead() {
    
    // left motor
    digitalWrite(12, HIGH); // direction (forward)
-   analogWrite(3, 130); // speed
+   OCR3C = 220; // speed
    
    // right motor
    digitalWrite(13, LOW); // direction (forward)
-   analogWrite(11, 120); // speed
+   OCR1A = 180; // 
+   
+   // start the motors
+   TCCR1A |= _BV(COM1A1); // clear on compare match
+   TCCR3A |= _BV(COM3C1);
 }
 
-void turnRight() {
+void turnRight(int v) {
    Serial.print("turning right");
    Serial.print("\r\n");
    
    // left motor
    digitalWrite(12, HIGH); // direction (forward)
-   analogWrite(3, 130); // speed
+   OCR3C = v + 20; // speed
    
    // right motor
    digitalWrite(13, HIGH); // direction (backward)
-   analogWrite(11, 120); // speed
+   OCR1A = v - 20; // speed
+   
+   // start the motors
+   TCCR1A |= _BV(COM1A1); // clear on compare match
+   TCCR3A |= _BV(COM3C1);
+}
+
+void turnLeft(int v) {
+   Serial.print("turning right");
+   Serial.print("\r\n");
+   
+   // left motor
+   digitalWrite(12, LOW); // direction (forward)
+   OCR3C = v + 20; // speed
+   
+   // right motor
+   digitalWrite(13, LOW); // direction (backward)
+   OCR1A = v - 20; // speed
+   
+   // start the motors
+   TCCR1A |= _BV(COM1A1); // clear on compare match
+   TCCR3A |= _BV(COM3C1);
 }
 
 int8_t checkButtons(){
@@ -364,27 +407,6 @@ uint8_t linearizeDistance(uint16_t distance_raw){
 }
 
 void displayDistance (int8_t dist){
-   /*
-        char disp [3];
-// Darstellung der Distanz in cm auf dem Display
-// -----------------------------------------------------
-// last digit
-disp[2] = dist % 10;
-
-// middle digit
-disp[1] = (dist / 10) % 10;
-if (disp[1] == 0 && dist < 100) {
-         disp[1] = ' ';
-}
-// first digit
-disp[0] = dist / 100;
-if (disp[0] == 0) {
-         disp[0] = ' ';
-}
-writetoDisplay(displayMask(disp[0])^=1, displayMask(disp[1])^=1, displayMask(disp[2])^=1);
-// -----------------------------------------------------
-*/
-        
         char disp [3];
          // Darstellung der Distanz in cm auf dem Display
          // -----------------------------------------------------
@@ -536,7 +558,13 @@ uint8_t displayMask(char val){
 }
 
 void returnBobbyToOrigin(int dir, int v){
-//TODO: write method
-//HINT: dir =  1 -> rotate clockwise
-//		dir = -1 -> rotate counter clockwise
+  if (dir == 1) {
+    turnRight(v);
+  }
+  else {
+    turnLeft(v);
+  }
+  
+  //HINT: dir =  1 -> rotate clockwise
+  //		dir = -1 -> rotate counter clockwise
 }
