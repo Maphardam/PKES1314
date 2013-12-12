@@ -35,8 +35,9 @@ int8_t channel_1 = 2;
 // Laufzeit des Programms
 unsigned long time;
 
-int8_t minimum_distance = 10;
-int8_t medium_distance = 20;
+int8_t minimum_distance = 15;
+int8_t medium_distance = 25;
+int8_t accuracy = 5;
 
 enum number {
     ZERO = 0b11111101,
@@ -128,7 +129,7 @@ void setup() {
     pinMode(11, OUTPUT); // channel B (right motor)
     
     TCCR1A = _BV(WGM11) | _BV(WGM10); // -> fast PWM with OCR1A top
-    TCCR1B = _BV(CS12) | _BV(WGM12); // -> prescaling clk/64
+    TCCR1B = _BV(CS12) | _BV(WGM12); // -> prescaler 64
     OCR1A = 160; // set top value
     
     // -----------------------------------------------------
@@ -215,25 +216,23 @@ void loop() {
       	// degree -> speed
       	// v = -omega * k
       	// speed is [0, 255] (255 is quite fast, so lets set the limit to 200)
-      	// 360° is equal to v=200
-      	// 1° is equal to 200/360 = 0.55
+      	// 360° is equal to v=230
+      	// 1° is equal to 230/360 = 
       	int v = 0;
 	
       	if (dir < 0) sum_rot *= -1;
 
-        /*
-      	//compute speed
-      	if (sum_rot <= 18)
-      	//minimum speed = 10
-    		v = 10;
-      	else if (sum_rot >= 360)
-      	//maximum speed = 200
-    		v = 200;
-      	else
-    		v = sum_rot * 0.55f;
-        */
         
-        v = 200;
+      	//compute speed
+      	if (sum_rot <= 59)
+      	//minimum speed = 150
+    		v = 150;
+      	else if (sum_rot >= 90)
+      	//maximum speed = 230
+    		v = 230;
+      	else
+    		v = sum_rot * 2.55f;
+        
         
       	if (dir < 0) sum_rot *= -1;
 
@@ -246,7 +245,7 @@ void loop() {
     		drive = true;
 
       	//if (sum_rot == 0.0)
-        if (sum_rot < 10 && sum_rot > -10)
+        if (sum_rot < accuracy && sum_rot > -accuracy)
     		drive = false;
 
       	Serial.print(". Drive: ");
@@ -265,7 +264,7 @@ void loop() {
    // Driving without any collision
    if (modus==2) {
         // show modus
-        displayDistance(2);
+        // displayDistance(2);
 
         // get distances
         uint8_t distance_left,distance_right;
@@ -294,9 +293,9 @@ void loop() {
         if (distance_left < medium_distance) {
           if (distance_left < minimum_distance) {
             turn_right = true;
-            disp[0] |= 0b01100011;
+            disp[2] |= 0b00001101;
           }
-          disp[0] |= 0b10001101;
+          disp[2] |= 0b01100001;
         }
             
         if (distance_right < medium_distance) {
@@ -306,12 +305,12 @@ void loop() {
             disp[1] |= 0b00000011;
             disp[2] |= 0b00000011;
           }
-          disp[0] |= 0b10000001;
-          disp[1] |= 0b10000001;
-          disp[2] |= 0b10000001;
+          disp[0] |= 0b00010001;
+          disp[1] |= 0b00010001;
+          disp[2] |= 0b00010001;
         }
         
-        // writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
+        writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
         
         // move
         if (turn_right) {
