@@ -214,7 +214,7 @@ void loop() {
         
         switch (drivingMode) {
         case STRAIGHT1:
-          if (cntLeft < 5*770) {
+          if (cntLeft < 2*770) {
             goStraight();
           }
           else {
@@ -240,7 +240,7 @@ void loop() {
           }
           break;
         case STRAIGHT2:
-          if (cntLeft < 5*770) {
+          if (cntLeft < 2*770) {
             goStraight();
           }
           else {
@@ -314,16 +314,21 @@ void startTheMotors() {
 }
 
 void goStraight() {
-  int diff = cntLeft - cntRight;
-  
-  if (diff < -20) {
-    goAheadLeftFaster();
-  }
-  else if (diff > 20) {
-    goAheadRightFaster();
+  if (cntRight == 0) {
+    goAhead();
   }
   else {
-    goAhead();
+    int ratio = cntLeft / cntRight;
+  
+    if (ratio < (2/3)) {
+      goAheadLeftFaster();
+    }
+    else if (ratio > (2/3)) {
+      goAheadRightFaster();
+    }
+    else {
+      goAhead();
+    }
   }
 }
 
