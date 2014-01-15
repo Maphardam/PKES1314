@@ -57,13 +57,12 @@ enum number {
 };
 
 enum modes {
-    STRAIGHT1,
-    TURN1,
-    STRAIGHT2,
-    TURN2
+    ROUTE1,
+    ROUTE2,
+    END
 };
 
-int8_t drivingMode = STRAIGHT1;
+int8_t drivingMode = ROUTE1;
 
 volatile int cntLeft  = 0;
 volatile int cntRight = 0;
@@ -85,7 +84,6 @@ void setup() {
     PCMSK0 |= _BV(PCINT4); // enable pin change interrupt 4
     
     EICRB |= _BV(ISC40);   // generate interrupt on any logical change on INT4
-    // EICRB &= ~(1 << ISC41);
     PCICR |= _BV(PCIE0);   // any change on PCINT7:0 will cause interrupt
   
   
@@ -94,7 +92,7 @@ void setup() {
     
     Serial.println("----------------------------------" );
     Serial.println("PKES Wintersemester 2013/14" );
-    Serial.println("Vorlage 3. Aufgabe " );
+    Serial.println("Vorlage 4. Aufgabe " );
     Serial.println("----------------------------------\r\n");
     
     // -------------------------------------------------------------
@@ -183,7 +181,7 @@ void setup() {
 void loop() {
   // Receive acceleromation values
   ((Flydurino*)flydurinoPtr)->getAcceleration(&acc_x, &acc_y, &acc_z);
-  if (acc_z > 18000) {
+  if (acc_z > 18200) {
     resetAll();
   }
     
@@ -201,7 +199,88 @@ void loop() {
    
    // Gyro task
    if (modus==1){
-       writetoDisplay(0b10011111,0b11111101,0b10110111);
+       // Get gyro data
+       ((Flydurino*)flydurinoPtr)->getRotationalSpeed(&rot_x, &rot_y, &rot_z);
+      
+	//measure time interval
+      	trigger = millis() - time;
+      	time += trigger;
+		
+      	//subtract offset
+      	if (rot_z > 105 && rot_z < 125)
+    		rot_z = 0;
+      	else
+    		rot_z -= 115;
+
+      	//rot_z -> degree
+      	//90° is equal to 12k sum_rot (experimental)
+      	//=> 1° is equal to 90/12k = 0.075
+      	current_rot_deg = (trigger * (rot_z * 0.001f)) * 0.0075f;
+
+      	//sum_rot = old sum_rot + current_rot_deg
+      	sum_rot += current_rot_deg;
+	
+      	//get direction of rotation
+      	int dir = 1;
+
+      	//display rot
+      	if (sum_rot < 0) {
+    		dir = -1;
+    		sum_rot *= -1;
+      	}
+      	char digit_2 = displayMask( (int) (sum_rot + 0.5) % 10);
+      	char digit_1 = displayMask( (int) ((sum_rot + 0.5) / 10) % 10);
+      	char digit_0 = displayMask( (int) ((sum_rot + 0.5) / 100) % 10);
+      	if (dir < 0){
+    		if (digit_0 == displayMask(0))
+    			digit_0 = displayMask(' ');
+    	  	digit_0 |= displayMask('-');
+    	  	sum_rot *= -1;
+      	}
+      	writetoDisplay(digit_0, digit_1, digit_2);
+
+      	// degree -> speed
+      	// v = -omega * k
+      	// speed is [0, 255] (255 is quite fast, so lets set the limit to 200)
+      	// 360° is equal to v=230
+      	// 1° is equal to 230/360 = 
+      	int v = 0;
+	
+      	if (dir < 0) sum_rot *= -1;
+
+        
+      	//compute speed
+      	if (sum_rot <= 59)
+      	//minimum speed = 150
+    		v = 150;
+      	else if (sum_rot >= 90)
+      	//maximum speed = 230
+    		v = 230;
+      	else
+    		v = sum_rot * 2.55f;
+        
+        
+      	if (dir < 0) sum_rot *= -1;
+
+      	//if current_rot == 0 AND sum_rot != 0 go into drive mode
+      	//leave drive mode, if sum_rot == 0
+      	if (current_rot_deg == 0.0 && sum_rot != 0.0)
+    		drive = true;
+
+      	//if (sum_rot == 0.0)
+        if (sum_rot < accuracy && sum_rot > -accuracy) {
+    	   drive = false;
+           modus = 2;
+        }
+	
+      	if (drive) {
+           returnBobbyToOrigin(dir, v);
+        }
+        else {
+           stopTheMotors();
+           cntLeft  = 0;
+           cntRight = 0;
+        }
    }
    
    //Serial.print("Left: "); Serial.print(cntLeft);
@@ -213,54 +292,34 @@ void loop() {
         // -----------------------------------------------------
         
         switch (drivingMode) {
-        case STRAIGHT1:
-          if (cntLeft < 2*770) {
+        case ROUTE1:
+          if (cntLeft < 1.5*770) {
             goStraight();
           }
           else {
-            drivingMode = TURN1;
-            //cli();
-            time = millis();
+            drivingMode = ROUTE2;
+            sum_rot     = 175;
+            modus       = 1;
+            stopTheMotors();
+            delay(400);
+            time        = millis();
           }
           break;
-        case TURN1:
-          computeRotation();
-          if (sum_rot < 100) {
-            turnLeft(200);
-          }
-          else if (sum_rot < 180) {
-            turnLeft(120);
-          }
-          else {
-            drivingMode = STRAIGHT2;
-            sum_rot     = 0;
-            cntLeft     = 0;
-            cntRight    = 0;
-            //sei();
-          }
-          break;
-        case STRAIGHT2:
-          if (cntLeft < 2*770) {
+        case ROUTE2:
+          if (cntLeft < 1.5*770) {
             goStraight();
           }
           else {
-            drivingMode = TURN2;
-            //cli();
-            time = millis();
-            sum_rot = 0;
+            drivingMode = END;
+            modus       = 1;
+            sum_rot     = 175;
+            stopTheMotors();
+            delay(400);
+            time        = millis();
           }
           break;
-        case TURN2:
-          computeRotation();
-          if (sum_rot < 100) {
-            turnLeft(200);
-          }
-          else if (sum_rot < 180) {
-            turnLeft(120);
-          }
-          else {
-            resetAll();
-          }
+        case END:
+          resetAll(); 
           break;
         }
             
@@ -278,27 +337,7 @@ void resetAll() {
   sum_rot     = 0;
   cntLeft     = 0;
   cntRight    = 0;
-  drivingMode = STRAIGHT1;
-  //sei();
-}
-
-void computeRotation() {
-  // Get gyro data
-  ((Flydurino*)flydurinoPtr)->getRotationalSpeed(&rot_x, &rot_y, &rot_z);
-      
-  //measure time interval
-  trigger = millis() - time;
-  time += trigger;
-  
-  // rot_z -= 115;
-  
-  //rot_z -> degree
-  //90° is equal to 12k sum_rot (experimental)
-  //=> 1° is equal to 90/12k = 0.075
-  current_rot_deg = (trigger * (rot_z * 0.001f)) * 0.0075f;
-
-  //sum_rot = old sum_rot + current_rot_deg
-  sum_rot += current_rot_deg;
+  drivingMode = ROUTE1;
 }
 
 void stopTheMotors() {
@@ -318,12 +357,11 @@ void goStraight() {
     goAhead();
   }
   else {
-    int ratio = cntLeft / cntRight;
-  
-    if (ratio < (2/3)) {
+    double ratio = (double) cntLeft / cntRight;
+    if (ratio < 0.85) {
       goAheadLeftFaster();
     }
-    else if (ratio > (2/3)) {
+    else if (ratio > 0.85) {
       goAheadRightFaster();
     }
     else {
@@ -351,7 +389,7 @@ void goAheadLeftFaster() {
    
    // right motor
    digitalWrite(13, LOW); // direction (forward)
-   OCR1A = 0; // speed
+   OCR1A = 140; // speed
    
    startTheMotors();
 }
@@ -359,7 +397,7 @@ void goAheadLeftFaster() {
 void goAheadRightFaster() {
    // left motor
    digitalWrite(12, HIGH); // direction (forward)
-   OCR3C = 0; // speed
+   OCR3C = 180; // speed
    
    // right motor
    digitalWrite(13, LOW); // direction (forward)
@@ -402,6 +440,8 @@ int8_t checkButtons(){
    }
    if (analogRead(4) > 800){
      modus_new=2;
+     cntLeft  = 0;
+     cntRight = 0;
    }
    return modus_new;
    
