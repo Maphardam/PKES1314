@@ -9,63 +9,37 @@ void* operator new(size_t s, void* ptr) {return ptr;}
 void setup();
 void loop();
 int8_t checkButtons();
-void displaySpiritLevel(int16_t acc_x, int16_t acc_y, int16_t acc_z);
 uint8_t linearizeDistance(uint16_t distanceRaw);
-void displayDistance (int8_t dist);
 uint16_t readADC(int8_t channel);
 void writetoDisplay(char digit1, char digit2, char digit3);
-uint8_t displayMask(char val);
-
-void returnBobbyToOrigin(int dir, int v);
-
 char flydurinoPtr[sizeof(Flydurino)];
-// aktuelle Beschleunigungswerte, Kompassmessungen
+
+unsigned long time;
+int8_t  modus;
 int16_t acc_x, acc_y, acc_z;
-int16_t ori_x, ori_y, ori_z;
-int16_t rot_x, rot_y, rot_z;
-float current_rot_deg, sum_rot;
-// Wasserwaage oder Distanzmessung
-int8_t modus;
-int trigger;
-bool drive;
+
 // Kanal des ADC Wandlers
 // -------------------------------------------------------------
-int8_t channel_0 = 3; // korrekte Werte bestimmen !
+int8_t channel_0 = 3;
 int8_t channel_1 = 2;
 // -------------------------------------------------------------
 
-// Laufzeit des Programms
-unsigned long time;
-
-int8_t minimum_distance = 15;
-int8_t medium_distance = 25;
-int8_t accuracy = 5;
-
-enum number {
-    ZERO = 0b11111101,
-    ONE = 0b01100001,
-    TWO = 0b11011011,
-    THREE = 0b11110011,
-    FOUR = 0b01100111,
-    FIVE = 0b10110111,
-    SIX = 0b10111111,
-    SEVEN = 0b11100001,
-    EIGHT = 0b11111111,
-    NINE = 0b11110111,
-    NOTHING = 0b00000001,
-    MINUS = 0b00000010
-};
-
-enum modes {
-    ROUTE1,
-    ROUTE2,
-    END
-};
-
-int8_t drivingMode = ROUTE1;
-
 volatile int cntLeft  = 0;
 volatile int cntRight = 0;
+
+// speed control
+// -------------------------------------------------------------
+int vCurrent;
+int vmax;
+int vmin;
+float ratio;
+int maxSpeed;
+int minSpeed;
+int changeStep;
+float odometryRatio;
+float odometryMaxDiff;
+int calibrationMode;
+// -------------------------------------------------------------
 
 ISR(INT4_vect) {
     // Serial.println("INT4_vect");
@@ -79,12 +53,15 @@ ISR(PCINT0_vect) {
 
 // the setup routine runs once when you press reset:
 void setup() {
+    // setup interrupts
+    // -----------------------------------------------------------------------
     sei();                 // enable global interrupts
     EIMSK  |= _BV(INT4);   // enable external interrupt 4
     PCMSK0 |= _BV(PCINT4); // enable pin change interrupt 4
     
     EICRB |= _BV(ISC40);   // generate interrupt on any logical change on INT4
     PCICR |= _BV(PCIE0);   // any change on PCINT7:0 will cause interrupt
+    // -----------------------------------------------------------------------
   
   
     // initialize serial communication
@@ -92,7 +69,7 @@ void setup() {
     
     Serial.println("----------------------------------" );
     Serial.println("PKES Wintersemester 2013/14" );
-    Serial.println("Vorlage 4. Aufgabe " );
+    Serial.println("Vorlage 5. Aufgabe " );
     Serial.println("----------------------------------\r\n");
     
     // -------------------------------------------------------------
@@ -137,32 +114,15 @@ void setup() {
     
     // Configure PWM
     // -----------------------------------------------------
-    /*
-    Fast PWM, 8-bit = Mode 5 (101)
-    WGM-Register
-    
-    TCCR2A - [COM2A1, COM2A0, COM2B1, COM2B0, reserved, reserved, WGM21, WGM20]
-    TCCR2B - [FOC2A, FOC2B, reserved, reserved, WGM22, CS22, CS21, CS20]
-    
-    COM2x: toggle(01)/clear(10)/set(11) OC2x on compare match [Compare Output Mode]
-    WGM2n: Fast PWM = 011 (0xFF TOP) / 111 (OCR2A TOP) [Waveform Generation Mode]
-    
-    FOC2x: have to be zero when operating in PWM mode [FOrce Output Compare]
-    CS2n: select clock source, 001 = no prescaling [Clock Select]
-    */
-    
     pinMode(3, OUTPUT); // channel A (left motor)
     
     TCCR3A = _BV(WGM31) | _BV(WGM30); // -> fast PWM with OCR3A top
     TCCR3B = _BV(CS32) | _BV(WGM32); // -> prescaler 64
-    OCR3C = 220; // set top value
     
     pinMode(11, OUTPUT); // channel B (right motor)
     
     TCCR1A = _BV(WGM11) | _BV(WGM10); // -> fast PWM with OCR1A top
     TCCR1B = _BV(CS12) | _BV(WGM12); // -> prescaler 64
-    OCR1A = 160; // set top value
-    
     // -----------------------------------------------------
 
     // Configure Flydurino
@@ -173,21 +133,29 @@ void setup() {
     
     // -----------------------------------------------------
     
-    modus=0;
-    sum_rot=0;
-    drive = false;
+    modus           = 0;
+    vCurrent        = 30;
+    vmin            = 0;
+    vmax            = 0;
+    ratio           = 1.0;
+    maxSpeed        = 150;
+    minSpeed        = 80;
+    changeStep      = 5; // 10
+    odometryRatio   = 0.85;
+    odometryMaxDiff = 0.2;
+    calibrationMode = 0;
 }
 
 void loop() {
-  // Receive acceleromation values
+  // Receive acceleration values
   ((Flydurino*)flydurinoPtr)->getAcceleration(&acc_x, &acc_y, &acc_z);
-  if (acc_z > 18200) {
-    resetAll();
-  }
-    
   
+  // reset if taken up
+  /*if (acc_z > 19000) {
+    resetAll();
+  }*/
+    
   // default state - avoids crash situations due to suddenly starting
-   // PWM modus
    if (modus==0){
        writetoDisplay(0b10011111,0b11111101,0b10110111);
        
@@ -197,133 +165,102 @@ void loop() {
        time = millis();
    }
    
-   // Gyro task
+   // calibration
    if (modus==1){
-       // Get gyro data
-       ((Flydurino*)flydurinoPtr)->getRotationalSpeed(&rot_x, &rot_y, &rot_z);
-      
-	//measure time interval
-      	trigger = millis() - time;
-      	time += trigger;
-		
-      	//subtract offset
-      	if (rot_z > 105 && rot_z < 125)
-    		rot_z = 0;
-      	else
-    		rot_z -= 115;
-
-      	//rot_z -> degree
-      	//90° is equal to 12k sum_rot (experimental)
-      	//=> 1° is equal to 90/12k = 0.075
-      	current_rot_deg = (trigger * (rot_z * 0.001f)) * 0.0075f;
-
-      	//sum_rot = old sum_rot + current_rot_deg
-      	sum_rot += current_rot_deg;
-	
-      	//get direction of rotation
-      	int dir = 1;
-
-      	//display rot
-      	if (sum_rot < 0) {
-    		dir = -1;
-    		sum_rot *= -1;
-      	}
-      	char digit_2 = displayMask( (int) (sum_rot + 0.5) % 10);
-      	char digit_1 = displayMask( (int) ((sum_rot + 0.5) / 10) % 10);
-      	char digit_0 = displayMask( (int) ((sum_rot + 0.5) / 100) % 10);
-      	if (dir < 0){
-    		if (digit_0 == displayMask(0))
-    			digit_0 = displayMask(' ');
-    	  	digit_0 |= displayMask('-');
-    	  	sum_rot *= -1;
-      	}
-      	writetoDisplay(digit_0, digit_1, digit_2);
-
-      	// degree -> speed
-      	// v = -omega * k
-      	// speed is [0, 255] (255 is quite fast, so lets set the limit to 200)
-      	// 360° is equal to v=230
-      	// 1° is equal to 230/360 = 
-      	int v = 0;
-	
-      	if (dir < 0) sum_rot *= -1;
-
-        
-      	//compute speed
-      	if (sum_rot <= 59)
-      	//minimum speed = 150
-    		v = 150;
-      	else if (sum_rot >= 90)
-      	//maximum speed = 230
-    		v = 230;
-      	else
-    		v = sum_rot * 2.55f;
-        
-        
-      	if (dir < 0) sum_rot *= -1;
-
-      	//if current_rot == 0 AND sum_rot != 0 go into drive mode
-      	//leave drive mode, if sum_rot == 0
-      	if (current_rot_deg == 0.0 && sum_rot != 0.0)
-    		drive = true;
-
-      	//if (sum_rot == 0.0)
-        if (sum_rot < accuracy && sum_rot > -accuracy) {
-    	   drive = false;
-           modus = 2;
-        }
-	
-      	if (drive) {
-           returnBobbyToOrigin(dir, v);
-        }
-        else {
-           stopTheMotors();
-           cntLeft  = 0;
-           cntRight = 0;
-        }
+     if (millis() - time > 400) {
+       Serial.print("speed left:  "); Serial.println(cntLeft);
+       Serial.print("speed right: "); Serial.println(cntRight);
+       //Serial.print("ratio: "); Serial.println(ratio);
+       
+       goAhead(vCurrent);
+       
+       // find min and max PWM
+       if (calibrationMode == 0) {
+         if ((cntLeft < maxSpeed || cntRight < maxSpeed) && vCurrent < 250) {
+           vCurrent += changeStep;
+         }
+         else {
+           vmax            = vCurrent;
+           calibrationMode = 1;
+           Serial.println("Callibration:");
+           Serial.print("vmax = "); Serial.println(vmax);
+         }
+       }
+       
+       if (calibrationMode == 1) {
+         if ((cntLeft > minSpeed && cntRight > minSpeed) && vCurrent > 0) {
+           vCurrent -= changeStep;
+         }
+         else {
+           vmin = vCurrent + 20;
+           Serial.print("vmin = "); Serial.println(vmin);
+           Serial.print("ratio = "); Serial.println(ratio);
+           resetAll();
+           //cli();
+           EIMSK  &= ~_BV(INT4);
+           PCMSK0 &= ~_BV(PCINT4);
+         }
+       }
+       
+       /*
+       // find left/right PWM ratio
+       if (cntRight > 0) {
+         double currentRatio = (double) cntLeft / cntRight;
+         if (currentRatio < odometryRatio) {
+           if (currentRatio < (odometryRatio - odometryMaxDiff)) {
+             ratio += 0.1;
+           }
+         }
+         else if (currentRatio > odometryRatio) {
+           if (currentRatio > (odometryRatio + odometryMaxDiff)) {
+             ratio -= 0.1;
+           }
+         }
+       }
+       */
+       
+       cntLeft  = 0;
+       cntRight = 0;
+       time     = millis();
+     }
    }
    
-   //Serial.print("Left: "); Serial.print(cntLeft);
-   //Serial.print("Right: "); Serial.println(cntRight);
-   
-   // Driving without any collision
+   // drive in the circle
    if (modus==2) {
-        // Motor control
-        // -----------------------------------------------------
+        // get distances
+        uint8_t distance_left,distance_right;
+        distance_right = linearizeDistance(readADC(channel_1));
+        distance_left  = linearizeDistance(readADC(channel_0));
         
-        switch (drivingMode) {
-        case ROUTE1:
-          if (cntLeft < 1.5*770) {
-            goStraight();
-          }
-          else {
-            drivingMode = ROUTE2;
-            sum_rot     = 175;
-            modus       = 1;
-            stopTheMotors();
-            delay(400);
-            time        = millis();
-          }
-          break;
-        case ROUTE2:
-          if (cntLeft < 1.5*770) {
-            goStraight();
-          }
-          else {
-            drivingMode = END;
-            modus       = 1;
-            sum_rot     = 175;
-            stopTheMotors();
-            delay(400);
-            time        = millis();
-          }
-          break;
-        case END:
-          resetAll(); 
-          break;
+        //Serial.print("distance_right: "); Serial.println(distance_right);
+        
+        //Serial.print("distance_left: "); Serial.println(distance_left);
+        
+        int v = vmax;
+        
+        if (distance_right < 8) {
+          // obstacle
+          goBackwards(vmin);
         }
-            
-        // -----------------------------------------------------
+        else {
+          // calculate speed depending on distance to next
+          if (distance_right < 25) {
+            v = ((distance_right - 8) / 17.0) * (vmax - vmin) + vmin;
+          }
+          
+          if (distance_left < 10) {
+            goAheadRightFaster(vmin);
+            //turnLeft(vmin);
+          }
+          //else if (distance_left > 12) {
+          //  goAheadLeftFaster(vmin);
+          //}
+          else {
+            goAhead(v);
+          }
+        }
+        
+        Serial.print("v = "); Serial.println(v);
         
         delay(200);
    }
@@ -334,10 +271,8 @@ void loop() {
 void resetAll() {
   stopTheMotors();
   modus       = 0;
-  sum_rot     = 0;
   cntLeft     = 0;
   cntRight    = 0;
-  drivingMode = ROUTE1;
 }
 
 void stopTheMotors() {
@@ -352,80 +287,94 @@ void startTheMotors() {
   TCCR3A |= _BV(COM3C1);
 }
 
-void goStraight() {
-  if (cntRight == 0) {
-    goAhead();
-  }
-  else {
-    double ratio = (double) cntLeft / cntRight;
-    if (ratio < 0.85) {
-      goAheadLeftFaster();
-    }
-    else if (ratio > 0.85) {
-      goAheadRightFaster();
-    }
-    else {
-      goAhead();
-    }
-  }
-}
+/*
+calculation of left and right speed:
+left/right = ratio and (left + right)/2 = _speed
 
-void goAhead() {
+=> right = (2 * _speed)/ (ratio + 1)
+   left  = ratio * right;
+*/
+
+void goAhead(int _speed) {
+   int right = 2 * _speed / (ratio + 1);
+  
    // left motor
    digitalWrite(12, HIGH); // direction (forward)
-   OCR3C = 250; // speed
+   OCR3C = ratio * right; // fix was 250
    
    // right motor
    digitalWrite(13, LOW); // direction (forward)
-   OCR1A = 180; // speed
+   OCR1A = right; // fix was 180
    
    startTheMotors();
 }
 
-void goAheadLeftFaster() {
+void goBackwards(int _speed) {
+   int right = 2 * _speed / (ratio + 1);
+  
    // left motor
-   digitalWrite(12, HIGH); // direction (forward)
-   OCR3C = 250; // speed
-   
-   // right motor
-   digitalWrite(13, LOW); // direction (forward)
-   OCR1A = 140; // speed
-   
-   startTheMotors();
-}
-
-void goAheadRightFaster() {
-   // left motor
-   digitalWrite(12, HIGH); // direction (forward)
-   OCR3C = 180; // speed
-   
-   // right motor
-   digitalWrite(13, LOW); // direction (forward)
-   OCR1A = 180; // speed
-   
-   startTheMotors();
-}
-
-void turnRight(int v) {
-   // left motor
-   digitalWrite(12, HIGH); // direction (forward)
-   OCR3C = v + 50; // speed
+   digitalWrite(12, LOW); // direction (backward)
+   OCR3C = ratio * right; // fix was 120
    
    // right motor
    digitalWrite(13, HIGH); // direction (backward)
-   OCR1A = v - 20; // speed
+   OCR1A = right; // fix was 100
    
    startTheMotors();
 }
 
-void turnLeft(int v) {
+void goAheadLeftFaster(int _speed) {
+   int right = 2 * _speed / (ratio + 0.2 + 1);
+  
    // left motor
-   digitalWrite(12, LOW); // direction (forward)
-   OCR3C = v + 50; // speed
+   digitalWrite(12, HIGH); // direction (forward)
+   OCR3C = (ratio + 0.2) * right; // fix was 250
    
    // right motor
-   digitalWrite(13, LOW); // direction (backward)
-   OCR1A = v - 20; // speed
+   digitalWrite(13, LOW); // direction (forward)
+   OCR1A = right; // fix was 140
+   
+   startTheMotors();
+}
+
+void goAheadRightFaster(int _speed) {
+   int right = 2 * _speed / (ratio - 0.5 + 1);
+  
+   // left motor
+   digitalWrite(12, HIGH); // direction (forward)
+   OCR3C = (ratio - 0.5) * right; // fix was 180
+   
+   // right motor
+   digitalWrite(13, LOW); // direction (forward)
+   OCR1A = right; // fix was 160
+   
+   startTheMotors();
+}
+
+void turnRight(int _speed) {
+   int right = 2 * _speed / (ratio + 1);
+   
+   // left motor
+   digitalWrite(12, HIGH); // direction (forward)
+   OCR3C = ratio * right; // speed
+   
+   // right motor
+   digitalWrite(13, HIGH); // direction (backward)
+   OCR1A = right; // speed
+   
+   startTheMotors();
+}
+
+void turnLeft(int _speed) {
+   int right = 2 * _speed / (ratio + 1);
+  
+   // left motor
+   digitalWrite(12, LOW); // direction (backward)
+   OCR3C = ratio * right; // speed
+   
+   // right motor
+   digitalWrite(13, LOW); // direction (forward)
+   OCR1A = right; // speed
    
    startTheMotors();
 }
@@ -447,7 +396,6 @@ int8_t checkButtons(){
    
 }
 
-
 uint8_t linearizeDistance(uint16_t distance_raw){
    double distance_cm=0;
    // Transformation der Spannungsbezogenen Distanzwerte in
@@ -457,70 +405,6 @@ uint8_t linearizeDistance(uint16_t distance_raw){
    // -----------------------------------------------------
    return (int8_t)ceil(distance_cm);
 }
-
-void displayDistance (int8_t dist){
-        char disp [3];
-         // Darstellung der Distanz in cm auf dem Display
-         // -----------------------------------------------------
-        
-         // last digit
-        
-         switch (dist % 10) {
-         case 0: disp[2] = ZERO; break;
-         case 1: disp[2] = ONE; break;
-         case 2: disp[2] = TWO; break;
-         case 3: disp[2] = THREE; break;
-         case 4: disp[2] = FOUR; break;
-         case 5: disp[2] = FIVE; break;
-         case 6: disp[2] = SIX; break;
-         case 7: disp[2] = SEVEN; break;
-         case 8: disp[2] = EIGHT; break;
-         case 9: disp[2] = NINE; break;
-         default: break;
-         }
-
-         // middle digit
-         switch ((dist / 10) % 10) {
-         case 0:
-         if (dist < 100) {
-         disp[1] = NOTHING;
-         }
-         else {
-         disp[1] = ZERO;
-         }
-         break;
-         case 1: disp[1] = ONE; break;
-         case 2: disp[1] = TWO; break;
-         case 3: disp[1] = THREE; break;
-         case 4: disp[1] = FOUR; break;
-         case 5: disp[1] = FIVE; break;
-         case 6: disp[1] = SIX; break;
-         case 7: disp[1] = SEVEN; break;
-         case 8: disp[1] = EIGHT; break;
-         case 9: disp[1] = NINE; break;
-         default: break;
-         }
-        
-         // first digit
-         switch (dist / 100) {
-         case 0: disp[0] = NOTHING;break;
-         case 1: disp[0] = ONE; break;
-         case 2: disp[0] = TWO; break;
-         case 3: disp[0] = THREE; break;
-         case 4: disp[0] = FOUR; break;
-         case 5: disp[0] = FIVE; break;
-         case 6: disp[0] = SIX; break;
-         case 7: disp[0] = SEVEN; break;
-         case 8: disp[0] = EIGHT; break;
-         case 9: disp[0] = NINE; break;
-         default: break;
-         }
-        
-         writetoDisplay(disp[0]^=1, disp[1]^=1, disp[2]^=1);
-         // -----------------------------------------------------
-}
-
-
 
 uint16_t readADC (int8_t channel){
    int distance_raw;
@@ -573,50 +457,4 @@ void writetoDisplay(char digit1, char digit2, char digit3){
                 // data enable high - ready for next cycle
                 PORTH |= (1<<4);
         }
-}
-
-uint8_t displayMask(char val){
-        switch(val){
-                case ' ': return 0b00000000;
-                case 0: return 0b11111100;
-
-                case 1: return 0b01100000;
-                case 2: return 0b11011010;
-                case 3: return 0b11110010;
-                case 4: return 0b01100110;
-                case 5: return 0b10110110;
-                case 6: return 0b10111110;
-                case 7: return 0b11100000;
-                case 8: return 0b11111110;
-                case 9: return 0b11110110;
-
-                case 'a':
-                case 'A': return 0b11101110;
-                case 'b':
-                case 'B': return 0b00111110;
-                case 'c': return 0b00011010;
-                case 'C': return 0b10011100;
-                case 'd':
-                case 'D': return 0b01111010;
-                case 'e':
-                case 'E': return 0b10011110;
-                case 'f':
-                case 'F': return 0b10001110;
-
-                case '-': return 0b00000010;
-
-                default: return 0b00000001;
-        }
-}
-
-void returnBobbyToOrigin(int dir, int v){
-  if (dir == 1) {
-    turnRight(v);
-  }
-  else {
-    turnLeft(v);
-  }
-  
-  //HINT: dir =  1 -> rotate clockwise
-  //		dir = -1 -> rotate counter clockwise
 }
